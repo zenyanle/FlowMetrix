@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 /* SPDX-License-Identifier: GPL-2.0 */
 #include <linux/bpf.h>
 #include <linux/types.h>
