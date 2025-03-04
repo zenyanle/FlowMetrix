@@ -1,4 +1,4 @@
-package main
+package types
 
 // 常量定义
 const (
@@ -24,16 +24,16 @@ type EthernetHeader struct {
 
 // IPv4Header IPv4头部
 type IPv4Header struct {
-	VersionIHL uint8 // 版本(4位) + 头部长度(4位)
-	TOS        uint8
-	TotalLen   uint16
-	ID         uint16
+	VersionIHL          uint8 // 版本(4位) + 头部长度(4位)
+	TOS                 uint8
+	TotalLen            uint16
+	ID                  uint16
 	FlagsFragmentOffset uint16 // 标志(3位) + 片偏移(13位)
-	TTL        uint8
-	Protocol   uint8
-	Checksum   uint16
-	SrcIP      [4]byte
-	DstIP      [4]byte
+	TTL                 uint8
+	Protocol            uint8
+	Checksum            uint16
+	SrcIP               [4]byte
+	DstIP               [4]byte
 }
 
 // TCPHeader TCP头部

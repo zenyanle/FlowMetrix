@@ -30,25 +30,7 @@ func LoadConfig(env string) {
 		// 	loadFile(fmt.Sprintf("config/config.%s", env))
 		//}
 
-		// 加载其他子配置
-		if env == "" {
-			loadFile("configs/server/config.yaml")
-			loadFile("configs/server/file_rules.yaml")
-			loadFile("configs/client/config.yaml")
-			loadFile("configs/client/grpc_servers.yaml")
-			loadFile("configs/server/instructions.yaml")
-		}
-
-		if env == "server" {
-			loadFile("configs/server/config.yaml")
-			loadFile("configs/server/file_rules.yaml")
-			loadFile("configs/server/instructions.yaml")
-		}
-
-		if env == "client" {
-			loadFile("configs/client/config.yaml")
-			loadFile("configs/client/grpc_servers.yaml")
-		}
+		loadFile("configs/config.yaml")
 
 		//loadFile("config/client")
 

@@ -1,0 +1,114 @@
+package main
+
+import (
+	"FlowMetrix/pkg/logger"
+	"FlowMetrix/internal/bpf"
+	"bytes"
+	"encoding/binary"
+	"encoding/hex"
+	"flag"
+	"fmt"
+	"github.com/cilium/ebpf/link"
+	"github.com/cilium/ebpf/perf"
+	"github.com/cilium/ebpf/rlimit"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+)
+
+// 命令行参数
+var (
+	interfaceName string
+	showHex       bool
+	verbose       bool
+	debug         bool
+	vmwareOffset  int  // VMware头部偏移选项
+	detectVMware  bool // 自动检测VMware头部
+	maxBytes      int  // 最大显示字节数
+)
+
+func main1() {
+	// 解析命令行参数
+	flag.StringVar(&interfaceName, "i", "", "Interface to attach XDP program to")
+	flag.BoolVar(&showHex, "x", false, "Show hex dump of packets")
+	flag.BoolVar(&verbose, "v", false, "Verbose output")
+	flag.BoolVar(&debug, "d", false, "Enable debug output")
+	flag.IntVar(&vmwareOffset, "offset", VMwareOffset, "VMware header offset (default: 24)")
+	flag.BoolVar(&detectVMware, "auto-detect", true, "Auto-detect VMware header offset")
+	flag.IntVar(&maxBytes, "max-bytes", 512, "Maximum bytes to process (default: 512)")
+	flag.Parse()
+
+	rd, xdplink, obj := bpf.NewPerfReader()
+
+	defer obj.Close()
+	defer xdplink.Close()
+	defer rd.Close()
+
+	// 创建数据包打印器
+	printer := NewPacketPrinter(showHex, verbose, vmwareOffset, detectVMware, maxBytes)
+
+
+	// 处理信号
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+
+	fmt.Printf("Listening on interface %s (Press Ctrl+C to stop)\n", interfaceName)
+	if detectVMware {
+		fmt.Println("Auto-detection of VMware header enabled")
+	} else {
+		fmt.Printf("Using fixed VMware header offset: %d bytes\n", vmwareOffset)
+	}
+	fmt.Printf("Maximum packet bytes to process: %d\n", maxBytes)
+
+	metadataSize := binary.Size(PacketMetadata{})
+
+	if debug {
+		logger.Printf("Expected metadata size: %d bytes", metadataSize)
+	}
+
+	// 创建一个定时器，用于定期处理缓冲事件
+	processTicker := time.NewTicker(200 * time.Millisecond)
+	defer processTicker.Stop()
+
+	// 主循环
+	for {
+		select {
+		case <-sig:
+			logger.Print("\nReceived signal, exiting...")
+			return
+		default:
+			record, err := rd.Read()
+			if err != nil {
+				if err == perf.ErrClosed {
+					return
+				}
+				logger.Printf("Reading perf event: %v", err)
+				continue
+			}
+
+			// 处理丢失的样本
+			if record.LostSamples != 0 {
+				logger.Printf("Lost %d samples", record.LostSamples)
+				continue
+			}
+
+			if debug {
+				logger.Printf("Received event of size %d bytes", len(record.RawSample))
+				if len(record.RawSample) > 0 && len(record.RawSample) <= 32 {
+					logger.Printf("Event hex dump: %s", hex.EncodeToString(record.RawSample))
+				}
+			}
+
+
+			// 打印数据包
+			printer.PrintPacket(&syntheticMeta, record.RawSample)
+
+			} else if debug {
+				// 未知格式，记录调试信息
+				logger.Printf("Ignoring unrecognized event format: %d bytes", len(record.RawSample))
+			}
+		}
+	}
+}
