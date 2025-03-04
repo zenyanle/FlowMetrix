@@ -1,21 +1,23 @@
 package main
 
 import (
-	"FlowMetrix/pkg/logger"
 	"FlowMetrix/internal/bpf"
-	"bytes"
+	"FlowMetrix/internal/printer"
+	"FlowMetrix/pkg/logger"
+	"FlowMetrix/types"
 	"encoding/binary"
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
-	"github.com/cilium/ebpf/rlimit"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
+)
+
+const (
+	MaxPacketSize = 512 // 增大支持的数据包大小
+	VMwareOffset  = 24  // VMware头部默认偏移量
 )
 
 // 命令行参数
@@ -29,7 +31,14 @@ var (
 	maxBytes      int  // 最大显示字节数
 )
 
-func main1() {
+/*type PerfEventData struct {
+	Timestamp   uint64
+	PacketSize  uint32
+	CaptureSize uint32
+	Data        [54]byte // 最大捕获字节数
+}*/
+
+func main() {
 	// 解析命令行参数
 	flag.StringVar(&interfaceName, "i", "", "Interface to attach XDP program to")
 	flag.BoolVar(&showHex, "x", false, "Show hex dump of packets")
@@ -47,8 +56,7 @@ func main1() {
 	defer rd.Close()
 
 	// 创建数据包打印器
-	printer := NewPacketPrinter(showHex, verbose, vmwareOffset, detectVMware, maxBytes)
-
+	p := printer.NewPacketPrinter(showHex, verbose, vmwareOffset, detectVMware, maxBytes)
 
 	// 处理信号
 	sig := make(chan os.Signal, 1)
@@ -62,15 +70,15 @@ func main1() {
 	}
 	fmt.Printf("Maximum packet bytes to process: %d\n", maxBytes)
 
-	metadataSize := binary.Size(PacketMetadata{})
+	metadataSize := binary.Size(types.PacketMetadata{})
 
 	if debug {
 		logger.Printf("Expected metadata size: %d bytes", metadataSize)
 	}
 
 	// 创建一个定时器，用于定期处理缓冲事件
-	processTicker := time.NewTicker(200 * time.Millisecond)
-	defer processTicker.Stop()
+	// processTicker := time.NewTicker(200 * time.Millisecond)
+	// defer processTicker.Stop()
 
 	// 主循环
 	for {
@@ -101,14 +109,9 @@ func main1() {
 				}
 			}
 
-
 			// 打印数据包
-			printer.PrintPacket(&syntheticMeta, record.RawSample)
+			p.PrintPacket(record.RawSample)
 
-			} else if debug {
-				// 未知格式，记录调试信息
-				logger.Printf("Ignoring unrecognized event format: %d bytes", len(record.RawSample))
-			}
 		}
 	}
 }

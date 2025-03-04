@@ -1,6 +1,7 @@
-package main
+package printer
 
 import (
+	"FlowMetrix/types"
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
@@ -10,6 +11,16 @@ import (
 	"regexp"
 	"time"
 )
+
+var debug = true
+
+// 与BPF程序中相匹配的事件结构
+type PerfEventData struct {
+	Timestamp   uint64
+	PacketSize  uint32
+	CaptureSize uint32
+	Data        [54]byte // 最大捕获字节数
+}
 
 // PacketPrinter 数据包打印器
 type PacketPrinter struct {
@@ -213,57 +224,77 @@ func (p *PacketPrinter) findBestVMwarePacket(payload []byte) ([]byte, bool) {
 }
 
 // PrintPacket 打印数据包内容，处理VMware偏移
-func (p *PacketPrinter) PrintPacket(meta *PacketMetadata, payload []byte) {
+// PrintPacket 打印数据包内容，从payload中提取元数据（时间戳、大小等）
+func (p *PacketPrinter) PrintPacket(payload []byte) {
+	// 检查payload是否足够大以包含所有元数据
+	if len(payload) < 16 { // 8(timestamp) + 4(packet_size) + 4(capture_size)
+		fmt.Println("Error: Payload too short to contain metadata")
+		return
+	}
+
+	// 从payload中提取元数据
+	timestamp := binary.LittleEndian.Uint64(payload[0:8])
+	packetSize := binary.LittleEndian.Uint32(payload[8:12])
+	capturedSize := binary.LittleEndian.Uint32(payload[12:16])
+
+	// 提取实际的数据包内容(跳过元数据)
+	actualData := payload[16:]
+
+	// 可能的协议信息(如果包含)
+	var protocol uint16 = 0
+
 	// 更新统计信息
 	p.stats.packets++
-	p.stats.bytes += uint64(meta.PacketSize)
+	p.stats.bytes += uint64(packetSize)
 
 	// 打印数据包信息
 	fmt.Printf("\n=== Packet Captured at %s ===\n",
-		time.Unix(0, int64(meta.Timestamp)).Format("2006-01-02 15:04:05.000000"))
+		time.Unix(0, int64(timestamp)).Format("2006-01-02 15:04:05.000000"))
 
 	// 限制处理的最大字节数(确保不超过实际捕获大小)
-	actualCaptured := min(int(meta.CapturedSize), len(payload))
+	actualCaptured := min(int(capturedSize), len(actualData))
 	if actualCaptured > p.maxBytes {
 		if debug {
 			log.Printf("Limiting payload from %d to %d bytes", actualCaptured, p.maxBytes)
 		}
 		actualCaptured = p.maxBytes
-		payload = payload[:actualCaptured]
+		actualData = actualData[:actualCaptured]
 	}
 
 	fmt.Printf("Original Size: %d bytes, Captured: %d bytes\n",
-		meta.PacketSize, actualCaptured)
+		packetSize, actualCaptured)
 
 	// 增强调试信息
 	if debug {
-		fmt.Printf("Protocol from metadata: %d (0x%04x)\n", meta.Protocol, meta.Protocol)
-		fmt.Printf("Payload length: %d bytes\n", len(payload))
+		if protocol > 0 {
+			fmt.Printf("Protocol from metadata: %d (0x%04x)\n", protocol, protocol)
+		}
+		fmt.Printf("Payload length: %d bytes\n", len(actualData))
 	}
 
 	// 尝试找到VMware特有格式中的最佳数据包
-	improvedPayload, found := p.findBestVMwarePacket(payload)
+	improvedPayload, found := p.findBestVMwarePacket(actualData)
 	if found {
-		payload = improvedPayload
+		actualData = improvedPayload
 	}
 
 	// 检测真实以太网帧的偏移量
-	offset := p.detectRealEthernetOffset(payload)
+	offset := p.detectRealEthernetOffset(actualData)
 
 	// 解析以太网头部
-	if len(payload) < offset+14 {
+	if len(actualData) < offset+14 {
 		fmt.Println("Packet too short for Ethernet header after offset")
 
 		// 如果开启调试，显示原始内容
 		if debug {
-			fmt.Printf("Raw data (%d bytes): %s\n", len(payload),
-				hex.EncodeToString(payload))
+			fmt.Printf("Raw data (%d bytes): %s\n", len(actualData),
+				hex.EncodeToString(actualData))
 		}
 		return
 	}
 
 	// 获取实际的以太网帧数据
-	realEthernet := payload[offset:]
+	realEthernet := actualData[offset:]
 
 	// 确保只处理有效的以太网帧数据
 	if len(realEthernet) < 14 {
@@ -271,7 +302,7 @@ func (p *PacketPrinter) PrintPacket(meta *PacketMetadata, payload []byte) {
 		return
 	}
 
-	eth := &EthernetHeader{}
+	eth := &types.EthernetHeader{}
 	reader := bytes.NewReader(realEthernet)
 	if err := binary.Read(reader, binary.BigEndian, eth); err != nil {
 		fmt.Printf("Error reading Ethernet header: %v\n", err)
