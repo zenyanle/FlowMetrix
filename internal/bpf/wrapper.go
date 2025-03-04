@@ -1,7 +1,6 @@
 package bpf
 
 import (
-	"FlowMetrix/pkg/config"
 	"FlowMetrix/pkg/logger"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
@@ -25,8 +24,8 @@ func NewPerfReader() (*perf.Reader, link.Link, *SamplerKernObjectsWrapper) {
 	if err := loadSampler_kernObjects(&objs, nil); err != nil {
 		logger.Fatalf("Loading objects: %v", err)
 	}
-
-	interfaceName := config.Get("config.ifname").(string)
+	interfaceName := "ens33"
+	// interfaceName := config.Get("config.ifname").(string)
 
 	iface, err := net.InterfaceByName(interfaceName)
 	if err != nil {
