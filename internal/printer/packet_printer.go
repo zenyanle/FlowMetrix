@@ -455,10 +455,10 @@ func (p *PacketPrinter) printStats() {
 		float64(p.stats.bytes*8)/(elapsed*1000000))
 }
 
-// min 返回两个整数中较小的一个
+/*// min 返回两个整数中较小的一个
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
-}
+}*/
