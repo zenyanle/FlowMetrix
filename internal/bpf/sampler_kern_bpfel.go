@@ -12,15 +12,7 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type sampler_kernPacketBuffer struct {
-	Event struct {
-		Timestamp   uint64
-		PacketSize  uint32
-		CaptureSize uint32
-		Data        [54]uint8
-		_           [2]byte
-	}
-}
+type sampler_kernPacketBuffer struct{ Data [64]uint8 }
 
 // loadSampler_kern returns the embedded CollectionSpec for sampler_kern.
 func loadSampler_kern() (*ebpf.CollectionSpec, error) {

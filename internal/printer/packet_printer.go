@@ -4,121 +4,37 @@ import (
 	"FlowMetrix/types"
 	"bytes"
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
-	"log"
 	"net"
-	"regexp"
 	"time"
 )
 
-var debug = true
-
-// 与BPF程序中相匹配的事件结构
-type PerfEventData struct {
-	Timestamp   uint64
-	PacketSize  uint32
-	CaptureSize uint32
-	Data        [54]byte // 最大捕获字节数
-}
-
-// PacketPrinter 数据包打印器
+// PacketPrinter 负责数据包显示逻辑
 type PacketPrinter struct {
 	showHex      bool
 	verbose      bool
 	vmwareOffset int
-	detectVMware bool
 	maxBytes     int
 	stats        struct {
 		packets uint64
 		bytes   uint64
 	}
-	startTime      time.Time
-	lastOffsetUsed int // 缓存最后使用的有效偏移量
+	startTime time.Time
 }
 
 // NewPacketPrinter 创建新的数据包打印器
 func NewPacketPrinter(showHex, verbose bool, vmwareOffset int, detectVMware bool, maxBytes int) *PacketPrinter {
 	return &PacketPrinter{
-		showHex:        showHex,
-		verbose:        verbose,
-		vmwareOffset:   vmwareOffset,
-		detectVMware:   detectVMware,
-		maxBytes:       maxBytes,
-		startTime:      time.Now(),
-		lastOffsetUsed: -1, // 初始值为-1表示未确定
+		showHex:      showHex,
+		verbose:      verbose,
+		vmwareOffset: vmwareOffset,
+		maxBytes:     maxBytes,
+		startTime:    time.Now(),
 	}
-}
-
-// detectRealEthernetOffset 尝试找出真正的以太网头在哪里 - 完全重写
-func (p *PacketPrinter) detectRealEthernetOffset(payload []byte) int {
-	// 如果数据包太短，无法处理
-	if len(payload) < 14 {
-		return 0
-	}
-
-	// 检查常见的偏移量，优先使用
-	commonOffsets := []int{0, 24, 18}
-
-	// 对于常见的VMware包大小，直接使用经验值
-	if len(payload) == 52 {
-		// 52字节的包通常以太网头部在偏移24
-		return 24
-	} else if len(payload) >= 108 {
-		// 108字节通常是重复格式，我们优先选择偏移量0
-		return 0
-	}
-
-	// 首先检查最可能的偏移量
-	for _, offset := range commonOffsets {
-		if len(payload) >= offset+14 {
-			ethType := binary.BigEndian.Uint16(payload[offset+12 : offset+14])
-			if isCommonEtherType(ethType) &&
-				isValidMACPair(payload[offset:offset+6], payload[offset+6:offset+12]) {
-				if debug {
-					log.Printf("Found valid Ethernet frame at common offset %d", offset)
-				}
-				// 缓存此有效偏移量
-				p.lastOffsetUsed = offset
-				return offset
-			}
-		}
-	}
-
-	// 没有找到最常见位置的有效帧，全面扫描
-	for i := 0; i <= len(payload)-14; i += 2 { // 以2字节步进，更可能找到对齐的帧
-		// 跳过已经检查过的常见偏移量
-		if i == 0 || i == 18 || i == 24 {
-			continue
-		}
-
-		ethType := binary.BigEndian.Uint16(payload[i+12 : i+14])
-		if isCommonEtherType(ethType) &&
-			isValidMACPair(payload[i:i+6], payload[i+6:i+12]) {
-			if debug {
-				log.Printf("Found valid Ethernet frame at offset %d", i)
-				// 打印MAC地址和EtherType以便确认
-				srcMAC := net.HardwareAddr(payload[i+6 : i+12])
-				dstMAC := net.HardwareAddr(payload[i : i+6])
-				log.Printf("MAC: %s -> %s, EtherType: 0x%04x", srcMAC, dstMAC, ethType)
-			}
-			// 缓存此有效偏移量
-			p.lastOffsetUsed = i
-			return i
-		}
-	}
-
-	// 如果没有找到，使用配置的默认偏移
-	if debug {
-		log.Printf("No valid Ethernet frame found, using default offset %d", p.vmwareOffset)
-	}
-	p.lastOffsetUsed = p.vmwareOffset
-	return p.vmwareOffset
 }
 
 // isCommonEtherType 检查是否为常见的EtherType
 func isCommonEtherType(etherType uint16) bool {
-	// 常见的以太网类型
 	return etherType == 0x0800 || // IPv4
 		etherType == 0x0806 || // ARP
 		etherType == 0x86DD || // IPv6
@@ -168,164 +84,127 @@ func isValidMAC(mac []byte) bool {
 	return true
 }
 
-// isValidMACAddress 检查MAC地址字符串是否有效
-func isValidMACAddress(mac string) bool {
-	// 简单检查：MAC地址格式为xx:xx:xx:xx:xx:xx
-	pattern := regexp.MustCompile(`^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$`)
-	if !pattern.MatchString(mac) {
-		return false
+// findBestVMwarePacket 处理VMware特有的数据包格式，找到最佳解析位置
+func (p *PacketPrinter) findBestVMwarePacket(payload []byte) ([]byte, int) {
+	if p.verbose {
+		fmt.Printf("DEBUG: 分析 %d 字节的数据包\n", len(payload))
 	}
 
-	// 排除全0或全F的MAC
-	zeroPattern := regexp.MustCompile(`^([0]{2}[:-]){5}([0]{2})$`)
-	ffPattern := regexp.MustCompile(`^([Ff]{2}[:-]){5}([Ff]{2})$`)
-	return !zeroPattern.MatchString(mac) && !ffPattern.MatchString(mac)
-}
-
-// findBestVMwarePacket 处理VMware特有的数据包格式，找到最佳解析位置
-func (p *PacketPrinter) findBestVMwarePacket(payload []byte) ([]byte, bool) {
-	// 特别处理108字节的VMware重复包
-	if len(payload) >= 108 {
-		// 这种包通常有两个以太网帧：
-		// 1. 在偏移0处的初始帧，只有部分信息
-		// 2. 在后半部分（通常偏移量44或48左右）的完整帧
-
-		// 查找第二个有效的以太网帧
-		for i := 30; i <= len(payload)-14; i += 2 {
-			// 只检查这一段区域
-			if i > 60 {
-				break
+	// 特别处理VMware重复包
+	if len(payload) >= 64 {
+		// 1. 在特定偏移量检查有效的以太网帧
+		possibleOffsets := []int{0, 18, 24}
+		for _, offset := range possibleOffsets {
+			if len(payload) < offset+14 {
+				continue
 			}
 
-			ethType := binary.BigEndian.Uint16(payload[i+12 : i+14])
+			ethType := binary.BigEndian.Uint16(payload[offset+12 : offset+14])
 			if isCommonEtherType(ethType) &&
-				isValidMACPair(payload[i:i+6], payload[i+6:i+12]) {
+				isValidMACPair(payload[offset:offset+6], payload[offset+6:offset+12]) {
+				if p.verbose {
+					fmt.Printf("DEBUG: 在偏移量 %d 找到有效以太网帧\n", offset)
+					srcMAC := net.HardwareAddr(payload[offset+6 : offset+12])
+					dstMAC := net.HardwareAddr(payload[offset : offset+6])
+					fmt.Printf("DEBUG: MAC: %s -> %s, EtherType: 0x%04x\n",
+						srcMAC, dstMAC, ethType)
+				}
+				return payload, offset
+			}
+		}
 
-				// 确认这是个重复的MAC头部（与起始处相同）
-				if bytes.Equal(payload[i:i+12], payload[0:12]) {
-					// 找到了重复的以太网头
-					// 选择第二个帧，因为它通常包含更完整的信息
-					secondFrame := payload[i:]
-					if debug {
-						log.Printf("Found duplicate frame at offset %d, using it for better data", i)
+		// 2. 查找IPv4特征
+		for i := 0; i < len(payload)-20; i++ {
+			// 寻找IPv4版本(4)和头部长度(5)，通常为0x45
+			if payload[i] == 0x45 && i+20 <= len(payload) {
+				// 验证更多IPv4头部字段以增加可信度
+				ipLen := binary.BigEndian.Uint16(payload[i+2 : i+4])
+				if ipLen >= 20 && ipLen <= uint16(len(payload)-i) {
+					if p.verbose {
+						fmt.Printf("DEBUG: 在偏移量 %d 找到可能的IPv4头部\n", i)
 					}
 
-					// 检查它是否有足够的数据来解析完整的IP和TCP头
-					if len(secondFrame) >= 54 { // 14(以太网) + 20(IP) + 20(TCP)
-						return secondFrame, true
-					}
+					// 如果是纯IP数据包，处理为有偏移的以太网包
+					return payload, i - 14
 				}
 			}
 		}
 	}
 
-	// 没有找到更好的帧，返回原始数据
-	return payload, false
+	// 如果没找到更好的位置，使用配置的偏移量
+	return payload, p.vmwareOffset
 }
 
-// PrintPacket 打印数据包内容，处理VMware偏移
-// PrintPacket 打印数据包内容，从payload中提取元数据（时间戳、大小等）
+// PrintPacket 打印数据包内容
 func (p *PacketPrinter) PrintPacket(payload []byte) {
-	// 检查payload是否足够大以包含所有元数据
-	if len(payload) < 16 { // 8(timestamp) + 4(packet_size) + 4(capture_size)
-		fmt.Println("Error: Payload too short to contain metadata")
+	if len(payload) == 0 {
+		fmt.Println("Error: 空数据包")
 		return
 	}
 
-	// 从payload中提取元数据
-	timestamp := binary.LittleEndian.Uint64(payload[0:8])
-	packetSize := binary.LittleEndian.Uint32(payload[8:12])
-	capturedSize := binary.LittleEndian.Uint32(payload[12:16])
-
-	// 提取实际的数据包内容(跳过元数据)
-	actualData := payload[16:]
-
-	// 可能的协议信息(如果包含)
-	var protocol uint16 = 0
-
 	// 更新统计信息
 	p.stats.packets++
-	p.stats.bytes += uint64(packetSize)
+	p.stats.bytes += uint64(len(payload))
 
 	// 打印数据包信息
-	fmt.Printf("\n=== Packet Captured at %s ===\n",
-		time.Unix(0, int64(timestamp)).Format("2006-01-02 15:04:05.000000"))
+	fmt.Printf("\n=== 捕获数据包 [%s] ===\n", time.Now().Format("2006-01-02 15:04:05.000000"))
+	fmt.Printf("数据包大小: %d 字节\n", len(payload))
 
-	// 限制处理的最大字节数(确保不超过实际捕获大小)
-	actualCaptured := min(int(capturedSize), len(actualData))
-	if actualCaptured > p.maxBytes {
-		if debug {
-			log.Printf("Limiting payload from %d to %d bytes", actualCaptured, p.maxBytes)
+	// 如果数据包超过最大显示字节数，截断它
+	actualData := payload
+	if len(actualData) > p.maxBytes {
+		if p.verbose {
+			fmt.Printf("DEBUG: 限制显示数据从 %d 到 %d 字节\n", len(actualData), p.maxBytes)
 		}
-		actualCaptured = p.maxBytes
-		actualData = actualData[:actualCaptured]
+		actualData = actualData[:p.maxBytes]
 	}
 
-	fmt.Printf("Original Size: %d bytes, Captured: %d bytes\n",
-		packetSize, actualCaptured)
-
-	// 增强调试信息
-	if debug {
-		if protocol > 0 {
-			fmt.Printf("Protocol from metadata: %d (0x%04x)\n", protocol, protocol)
-		}
-		fmt.Printf("Payload length: %d bytes\n", len(actualData))
-	}
-
-	// 尝试找到VMware特有格式中的最佳数据包
-	improvedPayload, found := p.findBestVMwarePacket(actualData)
-	if found {
-		actualData = improvedPayload
-	}
-
-	// 检测真实以太网帧的偏移量
-	offset := p.detectRealEthernetOffset(actualData)
+	// 始终使用 findBestVMwarePacket 尝试找到最佳解析位置
+	detectedData, offset := p.findBestVMwarePacket(actualData)
 
 	// 解析以太网头部
-	if len(actualData) < offset+14 {
-		fmt.Println("Packet too short for Ethernet header after offset")
-
-		// 如果开启调试，显示原始内容
-		if debug {
-			fmt.Printf("Raw data (%d bytes): %s\n", len(actualData),
-				hex.EncodeToString(actualData))
+	if len(detectedData) < offset+14 {
+		fmt.Printf("数据包过短，无法解析以太网头部 (需要偏移+14=%d 字节)\n", offset+14)
+		if p.showHex {
+			fmt.Println("\n原始数据十六进制:")
+			p.printHexDump(actualData)
 		}
 		return
 	}
 
 	// 获取实际的以太网帧数据
-	realEthernet := actualData[offset:]
+	realEthernet := detectedData[offset:]
 
-	// 确保只处理有效的以太网帧数据
+	// 确保有足够的数据构成有效以太网帧
 	if len(realEthernet) < 14 {
-		fmt.Println("Ethernet frame too short after offset adjustment")
+		fmt.Println("调整偏移后以太网帧过短")
 		return
 	}
 
 	eth := &types.EthernetHeader{}
 	reader := bytes.NewReader(realEthernet)
 	if err := binary.Read(reader, binary.BigEndian, eth); err != nil {
-		fmt.Printf("Error reading Ethernet header: %v\n", err)
+		fmt.Printf("读取以太网头部错误: %v\n", err)
 		return
 	}
 
-	fmt.Printf("\nEthernet:\n")
-	fmt.Printf("  Src MAC: %s\n", net.HardwareAddr(eth.SrcMAC[:]))
-	fmt.Printf("  Dst MAC: %s\n", net.HardwareAddr(eth.DstMAC[:]))
-	fmt.Printf("  Type: 0x%04x\n", eth.EtherType)
+	fmt.Printf("\n以太网:\n")
+	fmt.Printf("  源MAC: %s\n", net.HardwareAddr(eth.SrcMAC[:]))
+	fmt.Printf("  目标MAC: %s\n", net.HardwareAddr(eth.DstMAC[:]))
+	fmt.Printf("  类型: 0x%04x\n", eth.EtherType)
 
 	// 根据EtherType解析上层协议
-	if eth.EtherType == 0x0800 && len(realEthernet) >= 34 { // 以太网头(14) + IP头(20)
+	if eth.EtherType == 0x0800 && len(realEthernet) >= 34 {
 		p.parseIPv4(realEthernet[14:])
-	} else if eth.EtherType == 0x0806 && len(realEthernet) >= 42 { // ARP
+	} else if eth.EtherType == 0x0806 && len(realEthernet) >= 42 {
 		p.parseARP(realEthernet[14:])
-	} else if eth.EtherType == 0x86DD && len(realEthernet) >= 54 { // IPv6
+	} else if eth.EtherType == 0x86DD && len(realEthernet) >= 54 {
 		p.parseIPv6(realEthernet[14:])
 	}
 
 	// 显示十六进制数据
 	if p.showHex {
-		fmt.Println("\nHex dump:")
+		fmt.Println("\n十六进制数据:")
 		p.printHexDump(realEthernet)
 	}
 
@@ -339,6 +218,192 @@ func (p *PacketPrinter) PrintPacket(payload []byte) {
 	}
 }
 
+// parseIPv4 解析IPv4数据包
+func (p *PacketPrinter) parseIPv4(data []byte) {
+	if len(data) < 20 {
+		fmt.Println("IPv4数据包过短")
+		return
+	}
+
+	version := data[0] >> 4
+	headerLen := (data[0] & 0x0F) * 4
+	totalLen := binary.BigEndian.Uint16(data[2:4])
+	protocol := data[9]
+	srcIP := net.IP(data[12:16])
+	dstIP := net.IP(data[16:20])
+
+	fmt.Printf("\nIPv4:\n")
+	fmt.Printf("  版本: %d\n", version)
+	fmt.Printf("  头部长度: %d 字节\n", headerLen)
+	fmt.Printf("  总长度: %d 字节\n", totalLen)
+	fmt.Printf("  协议: %d", protocol)
+
+	// 显示协议名称
+	switch protocol {
+	case 1:
+		fmt.Print(" (ICMP)")
+	case 6:
+		fmt.Print(" (TCP)")
+	case 17:
+		fmt.Print(" (UDP)")
+	}
+	fmt.Println()
+
+	fmt.Printf("  源IP: %s\n", srcIP)
+	fmt.Printf("  目标IP: %s\n", dstIP)
+
+	// 如果有足够的数据，解析传输层
+	if len(data) >= int(headerLen) && headerLen >= 20 {
+		switch protocol {
+		case 6: // TCP
+			p.parseTCP(data[headerLen:], srcIP, dstIP)
+		case 17: // UDP
+			p.parseUDP(data[headerLen:], srcIP, dstIP)
+		}
+	}
+}
+
+// parseARP 解析ARP数据包
+func (p *PacketPrinter) parseARP(data []byte) {
+	if len(data) < 28 {
+		fmt.Println("ARP数据包过短")
+		return
+	}
+
+	hwType := binary.BigEndian.Uint16(data[0:2])
+	protoType := binary.BigEndian.Uint16(data[2:4])
+	hwSize := data[4]
+	protoSize := data[5]
+	operation := binary.BigEndian.Uint16(data[6:8])
+
+	fmt.Printf("\nARP:\n")
+	fmt.Printf("  硬件类型: %d\n", hwType)
+	fmt.Printf("  协议类型: 0x%04x\n", protoType)
+	fmt.Printf("  硬件地址长度: %d\n", hwSize)
+	fmt.Printf("  协议地址长度: %d\n", protoSize)
+	fmt.Printf("  操作码: %d", operation)
+
+	switch operation {
+	case 1:
+		fmt.Print(" (请求)")
+	case 2:
+		fmt.Print(" (响应)")
+	}
+	fmt.Println()
+
+	if len(data) >= 28 && hwSize == 6 && protoSize == 4 {
+		senderMAC := net.HardwareAddr(data[8:14])
+		senderIP := net.IP(data[14:18])
+		targetMAC := net.HardwareAddr(data[18:24])
+		targetIP := net.IP(data[24:28])
+
+		fmt.Printf("  发送方MAC: %s\n", senderMAC)
+		fmt.Printf("  发送方IP: %s\n", senderIP)
+		fmt.Printf("  目标MAC: %s\n", targetMAC)
+		fmt.Printf("  目标IP: %s\n", targetIP)
+	}
+}
+
+// parseIPv6 解析IPv6数据包
+func (p *PacketPrinter) parseIPv6(data []byte) {
+	if len(data) < 40 {
+		fmt.Println("IPv6数据包过短")
+		return
+	}
+
+	version := data[0] >> 4
+	trafficClass := ((data[0] & 0x0F) << 4) | ((data[1] & 0xF0) >> 4)
+	flowLabel := uint32(data[1]&0x0F)<<16 | uint32(data[2])<<8 | uint32(data[3])
+	payloadLen := binary.BigEndian.Uint16(data[4:6])
+	nextHeader := data[6]
+	hopLimit := data[7]
+	srcIP := net.IP(data[8:24])
+	dstIP := net.IP(data[24:40])
+
+	fmt.Printf("\nIPv6:\n")
+	fmt.Printf("  版本: %d\n", version)
+	fmt.Printf("  流量类: %d\n", trafficClass)
+	fmt.Printf("  流标签: 0x%05x\n", flowLabel)
+	fmt.Printf("  负载长度: %d\n", payloadLen)
+	fmt.Printf("  下一个头部: %d\n", nextHeader)
+	fmt.Printf("  跳数限制: %d\n", hopLimit)
+	fmt.Printf("  源地址: %s\n", srcIP)
+	fmt.Printf("  目标地址: %s\n", dstIP)
+
+	// 如果有足够的数据，解析下一层协议
+	if len(data) >= 40 {
+		switch nextHeader {
+		case 6: // TCP
+			p.parseTCP(data[40:], srcIP, dstIP)
+		case 17: // UDP
+			p.parseUDP(data[40:], srcIP, dstIP)
+		}
+	}
+}
+
+// parseTCP 解析TCP报文
+func (p *PacketPrinter) parseTCP(data []byte, srcIP, dstIP net.IP) {
+	if len(data) < 20 {
+		return
+	}
+
+	srcPort := binary.BigEndian.Uint16(data[0:2])
+	dstPort := binary.BigEndian.Uint16(data[2:4])
+	seqNum := binary.BigEndian.Uint32(data[4:8])
+	ackNum := binary.BigEndian.Uint32(data[8:12])
+	dataOffset := (data[12] >> 4) * 4
+	flags := data[13]
+
+	fmt.Printf("\nTCP:\n")
+	fmt.Printf("  源端口: %d\n", srcPort)
+	fmt.Printf("  目标端口: %d\n", dstPort)
+	fmt.Printf("  序列号: %d\n", seqNum)
+	fmt.Printf("  确认号: %d\n", ackNum)
+	fmt.Printf("  头部长度: %d 字节\n", dataOffset)
+	fmt.Printf("  标志: 0x%02x", flags)
+
+	// 打印标志名称
+	if flags&0x01 != 0 {
+		fmt.Print(" FIN")
+	}
+	if flags&0x02 != 0 {
+		fmt.Print(" SYN")
+	}
+	if flags&0x04 != 0 {
+		fmt.Print(" RST")
+	}
+	if flags&0x08 != 0 {
+		fmt.Print(" PSH")
+	}
+	if flags&0x10 != 0 {
+		fmt.Print(" ACK")
+	}
+	if flags&0x20 != 0 {
+		fmt.Print(" URG")
+	}
+	fmt.Println()
+
+	// 打印连接信息
+	fmt.Printf("  连接: %s:%d -> %s:%d\n", srcIP, srcPort, dstIP, dstPort)
+}
+
+// parseUDP 解析UDP报文
+func (p *PacketPrinter) parseUDP(data []byte, srcIP, dstIP net.IP) {
+	if len(data) < 8 {
+		return
+	}
+
+	srcPort := binary.BigEndian.Uint16(data[0:2])
+	dstPort := binary.BigEndian.Uint16(data[2:4])
+	length := binary.BigEndian.Uint16(data[4:6])
+
+	fmt.Printf("\nUDP:\n")
+	fmt.Printf("  源端口: %d\n", srcPort)
+	fmt.Printf("  目标端口: %d\n", dstPort)
+	fmt.Printf("  长度: %d 字节\n", length)
+	fmt.Printf("  连接: %s:%d -> %s:%d\n", srcIP, srcPort, dstIP, dstPort)
+}
+
 // printHexDump 打印十六进制数据
 func (p *PacketPrinter) printHexDump(data []byte) {
 	const bytesPerLine = 16
@@ -347,10 +412,7 @@ func (p *PacketPrinter) printHexDump(data []byte) {
 		fmt.Printf("%04x  ", i)
 
 		// 打印十六进制值
-		end := i + bytesPerLine
-		if end > len(data) {
-			end = len(data)
-		}
+		end := min(i+bytesPerLine, len(data))
 
 		for j := i; j < end; j++ {
 			fmt.Printf("%02x ", data[j])
@@ -386,9 +448,17 @@ func (p *PacketPrinter) printHexDump(data []byte) {
 // printStats 打印统计信息
 func (p *PacketPrinter) printStats() {
 	elapsed := time.Since(p.startTime).Seconds()
-	fmt.Printf("\n=== Statistics ===\n")
-	fmt.Printf("Packets: %d, Bytes: %d\n", p.stats.packets, p.stats.bytes)
-	fmt.Printf("Rate: %.2f pps, %.2f Mbps\n",
+	fmt.Printf("\n=== 统计信息 ===\n")
+	fmt.Printf("数据包: %d, 字节数: %d\n", p.stats.packets, p.stats.bytes)
+	fmt.Printf("速率: %.2f pps, %.2f Mbps\n",
 		float64(p.stats.packets)/elapsed,
 		float64(p.stats.bytes*8)/(elapsed*1000000))
+}
+
+// min 返回两个整数中较小的一个
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

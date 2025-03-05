@@ -9,10 +9,12 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"github.com/cilium/ebpf/perf"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+
+	"github.com/cilium/ebpf/perf"
 )
 
 const (
@@ -111,6 +113,7 @@ func main() {
 
 			// 打印数据包
 			p.PrintPacket(record.RawSample)
+			time.Sleep(10 * time.Millisecond)
 
 		}
 	}
