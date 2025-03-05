@@ -63,9 +63,10 @@ int sampler(struct xdp_md *ctx)
     }
     
     // 直接发送数据包内容，使用实际捕获的大小
-    return bpf_perf_event_output(ctx, &events, 
+    bpf_perf_event_output(ctx, &events, 
                                 BPF_F_CURRENT_CPU, 
                                 buffer->data, capture_size);
+    return XDP_PASS;
 }
 
 char LICENSE[] SEC("license") = "GPL";

@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/cilium/ebpf/perf"
 )
@@ -113,7 +112,7 @@ func main() {
 
 			// 打印数据包
 			p.PrintPacket(record.RawSample)
-			time.Sleep(10 * time.Millisecond)
+			// time.Sleep(10 * time.Millisecond)
 
 		}
 	}
