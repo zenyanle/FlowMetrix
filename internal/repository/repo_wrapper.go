@@ -85,16 +85,16 @@ func (d *GreptimeConnection) Write() {
 }
 
 func (d *GreptimeConnection) Flush(tbl *table.Table) {
-	err := d.client.StreamWrite(context.Background(), tbl)
+	resp, err := d.client.Write(context.Background(), tbl)
 	if err != nil {
 		logger.Printf("Error writing to GreptimeDB: %v\n", err)
 	}
-
+	logger.Printf("affected rows: %d\n", resp.GetAffectedRows().GetValue())
 }
 
 func (d *GreptimeConnection) Close() {
 	close(d.closeChan)
-	d.client.CloseStream(context.Background())
+	// d.client.CloseStream(context.Background())
 }
 
 func createPacketTable() (*table.Table, error) {
