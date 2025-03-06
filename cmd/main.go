@@ -2,7 +2,7 @@ package main
 
 import (
 	"FlowMetrix/internal/bpf"
-	"FlowMetrix/internal/printer"
+	"FlowMetrix/internal/extractor"
 	"FlowMetrix/pkg/logger"
 	"FlowMetrix/types"
 	"encoding/binary"
@@ -57,7 +57,11 @@ func main() {
 	defer rd.Close()
 
 	// 创建数据包打印器
-	p := printer.NewPacketPrinter(showHex, verbose, vmwareOffset, detectVMware, maxBytes)
+	// p := printer.NewPacketPrinter(showHex, verbose, vmwareOffset, detectVMware, maxBytes)
+
+	packetChan := make(chan extractor.PacketData)
+
+	d := extractor.NewDataExtractor(vmwareOffset, packetChan)
 
 	// 处理信号
 	sig := make(chan os.Signal, 1)
@@ -80,7 +84,14 @@ func main() {
 	// 创建一个定时器，用于定期处理缓冲事件
 	// processTicker := time.NewTicker(200 * time.Millisecond)
 	// defer processTicker.Stop()
-
+	go func() {
+		for {
+			select {
+			case data := <-packetChan:
+				logger.Printf("%+v", data)
+			}
+		}
+	}()
 	// 主循环
 	for {
 		select {
@@ -111,9 +122,11 @@ func main() {
 			}
 
 			// 打印数据包
-			p.PrintPacket(record.RawSample)
+			// p.PrintPacket(record.RawSample)
 			// time.Sleep(10 * time.Millisecond)
+			d.ProcessPacket(record.RawSample)
 
 		}
 	}
+
 }
