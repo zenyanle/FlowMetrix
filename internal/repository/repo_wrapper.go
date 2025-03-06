@@ -106,7 +106,7 @@ func createPacketTable() (*table.Table, error) {
 
 	// 按照结构体中的字段顺序添加列
 	// 1. Timestamp - 时间戳列
-	err = packetTable.AddTimestampColumn("timestamp", types.TIMESTAMP)
+	err = packetTable.AddTimestampColumn("ts", types.TIMESTAMP)
 	if err != nil {
 		return nil, err
 	}
