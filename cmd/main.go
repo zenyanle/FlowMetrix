@@ -3,12 +3,10 @@ package main
 import (
 	"FlowMetrix/internal/bpf"
 	"FlowMetrix/internal/extractor"
+	"FlowMetrix/internal/repository"
 	"FlowMetrix/pkg/logger"
-	"FlowMetrix/types"
-	"encoding/binary"
 	"encoding/hex"
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,12 +22,12 @@ const (
 // 命令行参数
 var (
 	interfaceName string
-	showHex       bool
-	verbose       bool
-	debug         bool
-	vmwareOffset  int  // VMware头部偏移选项
-	detectVMware  bool // 自动检测VMware头部
-	maxBytes      int  // 最大显示字节数
+	// showHex       bool
+	// verbose       bool
+	debug        bool
+	vmwareOffset int  // VMware头部偏移选项
+	detectVMware bool // 自动检测VMware头部
+	// maxBytes      int  // 最大显示字节数
 )
 
 /*type PerfEventData struct {
@@ -42,12 +40,12 @@ var (
 func main() {
 	// 解析命令行参数
 	flag.StringVar(&interfaceName, "i", "", "Interface to attach XDP program to")
-	flag.BoolVar(&showHex, "x", false, "Show hex dump of packets")
-	flag.BoolVar(&verbose, "v", false, "Verbose output")
+	// flag.BoolVar(&showHex, "x", false, "Show hex dump of packets")
+	// flag.BoolVar(&verbose, "v", false, "Verbose output")
 	flag.BoolVar(&debug, "d", false, "Enable debug output")
 	flag.IntVar(&vmwareOffset, "offset", VMwareOffset, "VMware header offset (default: 24)")
 	flag.BoolVar(&detectVMware, "auto-detect", true, "Auto-detect VMware header offset")
-	flag.IntVar(&maxBytes, "max-bytes", 512, "Maximum bytes to process (default: 512)")
+	// flag.IntVar(&maxBytes, "max-bytes", 512, "Maximum bytes to process (default: 512)")
 	flag.Parse()
 
 	rd, xdplink, obj := bpf.NewPerfReader()
@@ -61,37 +59,37 @@ func main() {
 
 	packetChan := make(chan extractor.PacketData)
 
-	d := extractor.NewDataExtractor(vmwareOffset, packetChan)
+	de := extractor.NewDataExtractor(vmwareOffset, packetChan)
+
+	gc, err := repository.NewGreptimeConnection(packetChan)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	defer gc.Close()
 
 	// 处理信号
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 
-	fmt.Printf("Listening on interface %s (Press Ctrl+C to stop)\n", interfaceName)
+	logger.Printf("Listening on interface %s (Press Ctrl+C to stop)\n", interfaceName)
 	if detectVMware {
-		fmt.Println("Auto-detection of VMware header enabled")
+		logger.Print("Auto-detection of VMware header enabled")
 	} else {
-		fmt.Printf("Using fixed VMware header offset: %d bytes\n", vmwareOffset)
+		logger.Printf("Using fixed VMware header offset: %d bytes\n", vmwareOffset)
 	}
-	fmt.Printf("Maximum packet bytes to process: %d\n", maxBytes)
-
-	metadataSize := binary.Size(types.PacketMetadata{})
-
-	if debug {
-		logger.Printf("Expected metadata size: %d bytes", metadataSize)
-	}
+	// logger.Printf("Maximum packet bytes to process: %d\n", maxBytes)
 
 	// 创建一个定时器，用于定期处理缓冲事件
 	// processTicker := time.NewTicker(200 * time.Millisecond)
 	// defer processTicker.Stop()
-	go func() {
+	/*	go func() {
 		for {
 			select {
 			case data := <-packetChan:
 				logger.Printf("%+v", data)
 			}
 		}
-	}()
+	}()*/
 	// 主循环
 	for {
 		select {
@@ -124,7 +122,7 @@ func main() {
 			// 打印数据包
 			// p.PrintPacket(record.RawSample)
 			// time.Sleep(10 * time.Millisecond)
-			d.ProcessPacket(record.RawSample)
+			de.ProcessPacket(record.RawSample)
 
 		}
 	}
