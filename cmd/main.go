@@ -27,6 +27,7 @@ var (
 	debug        bool
 	vmwareOffset int  // VMware头部偏移选项
 	detectVMware bool // 自动检测VMware头部
+	disableLog   bool
 	// maxBytes      int  // 最大显示字节数
 )
 
@@ -45,8 +46,13 @@ func main() {
 	flag.BoolVar(&debug, "d", false, "Enable debug output")
 	flag.IntVar(&vmwareOffset, "offset", VMwareOffset, "VMware header offset (default: 24)")
 	flag.BoolVar(&detectVMware, "auto-detect", true, "Auto-detect VMware header offset")
+	flag.BoolVar(&disableLog, "no-log", false, "Disable logrus output")
 	// flag.IntVar(&maxBytes, "max-bytes", 512, "Maximum bytes to process (default: 512)")
 	flag.Parse()
+
+	if disableLog {
+		logger.DisableLogOutput()
+	}
 
 	rd, xdplink, obj := bpf.NewPerfReader()
 

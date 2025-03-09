@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"io"
 	"os"
 
 	"github.com/sirupsen/logrus"
@@ -18,6 +19,10 @@ func init() {
 	})
 
 	logrus.SetLevel(logrus.InfoLevel) // 设置默认日志级别为 Info
+}
+
+func DisableLogOutput() {
+	logrus.SetOutput(io.Discard)
 }
 
 // SetLevel 设置日志级别
