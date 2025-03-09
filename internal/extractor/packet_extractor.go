@@ -10,8 +10,8 @@ import (
 
 // PacketData 表示用于时序数据库的结构化网络包数据
 type PacketData struct {
-	Timestamp time.Time // 捕获时间戳
-	// PacketSize  int              // 包大小，单位为字节
+	Timestamp   time.Time        // 捕获时间戳
+	PacketSize  int              // 包大小，单位为字节
 	EtherType   uint16           // 以太网帧类型
 	SrcMAC      net.HardwareAddr // 源 MAC 地址
 	DstMAC      net.HardwareAddr // 目的 MAC 地址
@@ -41,15 +41,28 @@ func NewDataExtractor(vmwareOffset int, packetChan chan<- PacketData) *DataExtra
 
 // ProcessPacket 从数据包中提取数据并将其发送到通道
 func (de *DataExtractor) ProcessPacket(payload []byte) {
-	if len(payload) == 0 {
+	if len(payload) < 2 { // 需要至少2个字节来获取包大小
+		return
+	}
+
+	// 从前两个字节中提取包大小（大端序）
+	originalPacketSize := int(binary.BigEndian.Uint16(payload[:2]))
+
+	// 跳过前两个长度字节，只处理真正的包数据
+	actualPayload := payload[2:]
+	if len(actualPayload) == 0 {
 		return
 	}
 
 	// 找到最佳的解析偏移量 (处理 VMware 数据包)
-	detectedData, offset := de.findBestVMwarePacket(payload)
+	detectedData, offset := de.findBestVMwarePacket(actualPayload)
 
 	// 提取指标并通过通道发送
 	packetData := de.extractPacketData(detectedData, offset)
+
+	// 设置原始包大小（从BPF提取的实际帧长度）
+	packetData.PacketSize = originalPacketSize
+
 	de.packetChan <- packetData
 }
 
@@ -142,7 +155,7 @@ func isValidMAC(mac []byte) bool {
 func (de *DataExtractor) extractPacketData(payload []byte, offset int) PacketData {
 	packetData := PacketData{
 		Timestamp: time.Now(),
-		// PacketSize: len(payload),
+		// PacketSize会在ProcessPacket中从前两个字节设置
 	}
 
 	// 确保我们有足够的数据来解析以太网报头

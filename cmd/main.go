@@ -3,7 +3,6 @@ package main
 import (
 	"FlowMetrix/internal/bpf"
 	"FlowMetrix/internal/extractor"
-	"FlowMetrix/internal/repository"
 	"FlowMetrix/pkg/logger"
 	"encoding/hex"
 	"flag"
@@ -61,11 +60,11 @@ func main() {
 
 	de := extractor.NewDataExtractor(vmwareOffset, packetChan)
 
-	gc, err := repository.NewGreptimeConnection(packetChan)
-	if err != nil {
-		logger.Fatal(err)
-	}
-	defer gc.Close()
+	/*	gc, err := repository.NewGreptimeConnection(packetChan)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		defer gc.Close()*/
 
 	// 处理信号
 	sig := make(chan os.Signal, 1)
@@ -82,14 +81,14 @@ func main() {
 	// 创建一个定时器，用于定期处理缓冲事件
 	// processTicker := time.NewTicker(200 * time.Millisecond)
 	// defer processTicker.Stop()
-	/*	go func() {
+	go func() {
 		for {
 			select {
 			case data := <-packetChan:
 				logger.Printf("%+v", data)
 			}
 		}
-	}()*/
+	}()
 	// 主循环
 	for {
 		select {
