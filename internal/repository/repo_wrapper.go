@@ -111,6 +111,12 @@ func createPacketTable() (*table.Table, error) {
 		return nil, err
 	}
 
+	// new: packet_size - 字段列
+	err = packetTable.AddFieldColumn("packet_size", types.UINT16)
+	if err != nil {
+		return nil, err
+	}
+
 	// 2. EtherType - 字段列
 	err = packetTable.AddFieldColumn("ether_type", types.UINT16)
 	if err != nil {
@@ -190,6 +196,7 @@ func addPacketRow(t *table.Table, data *extractor.PacketData) error {
 	// 添加行，参数必须与表结构中列的确切顺序相匹配
 	return t.AddRow(
 		data.Timestamp,   // 1. timestamp
+		data.PacketSize,  // new: packet_size
 		data.EtherType,   // 2. ether_type
 		srcMACStr,        // 3. src_mac
 		dstMACStr,        // 4. dst_mac

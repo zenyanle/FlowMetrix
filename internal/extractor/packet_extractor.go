@@ -11,7 +11,7 @@ import (
 // PacketData 表示用于时序数据库的结构化网络包数据
 type PacketData struct {
 	Timestamp   time.Time        // 捕获时间戳
-	PacketSize  int              // 包大小，单位为字节
+	PacketSize  uint16           // 包大小，单位为字节
 	EtherType   uint16           // 以太网帧类型
 	SrcMAC      net.HardwareAddr // 源 MAC 地址
 	DstMAC      net.HardwareAddr // 目的 MAC 地址
@@ -46,7 +46,7 @@ func (de *DataExtractor) ProcessPacket(payload []byte) {
 	}
 
 	// 从前两个字节中提取包大小（大端序）
-	originalPacketSize := int(binary.BigEndian.Uint16(payload[:2]))
+	originalPacketSize := binary.BigEndian.Uint16(payload[:2])
 
 	// 跳过前两个长度字节，只处理真正的包数据
 	actualPayload := payload[2:]
