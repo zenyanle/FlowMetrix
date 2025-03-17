@@ -42,7 +42,7 @@ func NewRingReader() (*ringbuf.Reader, link.Link, *SamplerKernObjectsWrapper) {
 	// defer xdpLink.Close()
 
 	// 创建perf reader
-	rd, err := ringbuf.NewReader(objs.Events)
+	rd, err := ringbuf.NewReader(objs.Rb)
 	if err != nil {
 		logger.Fatalf("Creating perf reader: %v", err)
 	}
