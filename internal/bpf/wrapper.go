@@ -3,9 +3,8 @@ package bpf
 import (
 	"FlowMetrix/pkg/logger"
 	"github.com/cilium/ebpf/link"
-	"github.com/cilium/ebpf/perf"
+	"github.com/cilium/ebpf/ringbuf"
 	"net"
-	"os"
 )
 
 type SamplerKernObjectsWrapper struct {
@@ -19,7 +18,7 @@ func (s *SamplerKernObjectsWrapper) Close() {
 	}
 }
 
-func NewPerfReader() (*perf.Reader, link.Link, *SamplerKernObjectsWrapper) {
+func NewRingReader() (*ringbuf.Reader, link.Link, *SamplerKernObjectsWrapper) {
 	objs := sampler_kernObjects{}
 	if err := loadSampler_kernObjects(&objs, nil); err != nil {
 		logger.Fatalf("Loading objects: %v", err)
@@ -43,7 +42,7 @@ func NewPerfReader() (*perf.Reader, link.Link, *SamplerKernObjectsWrapper) {
 	// defer xdpLink.Close()
 
 	// 创建perf reader
-	rd, err := perf.NewReader(objs.Events, os.Getpagesize()*128)
+	rd, err := ringbuf.NewReader(objs.Events)
 	if err != nil {
 		logger.Fatalf("Creating perf reader: %v", err)
 	}

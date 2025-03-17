@@ -7,11 +7,11 @@ import (
 	"FlowMetrix/pkg/logger"
 	"encoding/hex"
 	"flag"
+	"github.com/cilium/ebpf/ringbuf"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
-
-	"github.com/cilium/ebpf/perf"
 )
 
 const (
@@ -54,7 +54,7 @@ func main() {
 		logger.DisableLogOutput()
 	}
 
-	rd, xdplink, obj := bpf.NewPerfReader()
+	rd, xdplink, obj := bpf.NewRingReader()
 
 	defer obj.Close()
 	defer xdplink.Close()
@@ -105,16 +105,10 @@ func main() {
 		default:
 			record, err := rd.Read()
 			if err != nil {
-				if err == perf.ErrClosed {
+				if err == ringbuf.ErrClosed {
 					return
 				}
-				logger.Printf("Reading perf event: %v", err)
-				continue
-			}
-
-			// 处理丢失的样本
-			if record.LostSamples != 0 {
-				logger.Printf("Lost %d samples", record.LostSamples)
+				log.Printf("Error reading from ring buffer: %v", err)
 				continue
 			}
 
@@ -124,11 +118,12 @@ func main() {
 					logger.Printf("Event hex dump: %s", hex.EncodeToString(record.RawSample))
 				}
 			}
-
+			packetData := make([]byte, len(record.RawSample))
+			copy(packetData, record.RawSample)
 			// 打印数据包
 			// p.PrintPacket(record.RawSample)
 			// time.Sleep(10 * time.Millisecond)
-			de.ProcessPacket(record.RawSample)
+			de.ProcessPacket(packetData)
 
 		}
 	}
