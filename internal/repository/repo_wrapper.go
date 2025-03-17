@@ -20,14 +20,14 @@ type GreptimeConnection struct {
 func NewGreptimeConnection(packetChan chan extractor.PacketData) (*GreptimeConnection, error) {
 	cfg := greptime.NewConfig("127.0.0.1").
 		// 将数据库名称更改为你的数据库名称
-		WithDatabase("test")
+		WithDatabase("test").
 	// 默认端口 4001
 	// WithPort(4001).
 	// 如果服务配置了 TLS ，设置 TLS 选项来启用安全连接
 	// WithInsecure(false).
 	// 设置鉴权信息
 	// 如果数据库不需要鉴权，移除 WithAuth 方法即可
-	// WithAuth("username", "password")
+	       WithAuth("greptime_user", "greptime_pwd")
 
 	cli, err := greptime.NewClient(cfg)
 	if err != nil {

@@ -12,8 +12,6 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type sampler_kernPacketBuffer struct{ Data [64]uint8 }
-
 // loadSampler_kern returns the embedded CollectionSpec for sampler_kern.
 func loadSampler_kern() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_Sampler_kernBytes)
@@ -63,8 +61,7 @@ type sampler_kernProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type sampler_kernMapSpecs struct {
-	Events        *ebpf.MapSpec `ebpf:"events"`
-	PacketDataMap *ebpf.MapSpec `ebpf:"packet_data_map"`
+	Rb *ebpf.MapSpec `ebpf:"rb"`
 }
 
 // sampler_kernVariableSpecs contains global variables before they are loaded into the kernel.
@@ -93,14 +90,12 @@ func (o *sampler_kernObjects) Close() error {
 //
 // It can be passed to loadSampler_kernObjects or ebpf.CollectionSpec.LoadAndAssign.
 type sampler_kernMaps struct {
-	Events        *ebpf.Map `ebpf:"events"`
-	PacketDataMap *ebpf.Map `ebpf:"packet_data_map"`
+	Rb *ebpf.Map `ebpf:"rb"`
 }
 
 func (m *sampler_kernMaps) Close() error {
 	return _Sampler_kernClose(
-		m.Events,
-		m.PacketDataMap,
+		m.Rb,
 	)
 }
 
