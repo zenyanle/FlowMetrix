@@ -46,6 +46,14 @@ int sampler(struct xdp_md *ctx)
     if (data >= data_end)
         return XDP_PASS;
 
+    // 提前定义所有变量，避免goto跳过变量定义
+    __u32 frame_length = data_end - data;
+    __u16 stored_length;
+    __u32 available_bytes;
+    __u32 capture_size;
+    struct packet_data *packet;
+    long ret;
+
     // 采样决策 - 使用计数器决定是否采样
     __u32 key = 0;
     __u32 *counter = bpf_map_lookup_elem(&counter_map, &key);
@@ -74,11 +82,7 @@ int sampler(struct xdp_md *ctx)
     return XDP_PASS;
 
 sample_packet:
-    // 计算以太网帧长度
-    __u32 frame_length = data_end - data;
-
     // 防止长度溢出两个字节的存储空间
-    __u16 stored_length;
     if (frame_length > MAX_FRAME_LENGTH) {
         stored_length = MAX_FRAME_LENGTH; // 如果超过65535，就只存储最大值
     } else {
@@ -86,13 +90,12 @@ sample_packet:
     }
 
     // 计算可以捕获的字节数
-    __u32 available_bytes = data_end - data;
-    __u32 capture_size = available_bytes;
+    available_bytes = data_end - data;
+    capture_size = available_bytes;
     if (capture_size > MAX_CAPTURE - LENGTH_FIELD_SIZE)
         capture_size = MAX_CAPTURE - LENGTH_FIELD_SIZE;
 
     // 分配空间，ringbuf不需要预先分配缓冲区
-    struct packet_data *packet;
     packet = bpf_ringbuf_reserve(&rb, sizeof(struct packet_data), 0);
     if (!packet)
         return XDP_PASS;
@@ -102,7 +105,7 @@ sample_packet:
     packet->data[1] = stored_length & 0xFF;         // 低字节
 
     // 使用bpf_probe_read安全复制内存到packet的第3个字节开始的位置
-    long ret = bpf_probe_read_kernel(packet->data + LENGTH_FIELD_SIZE, capture_size, data);
+    ret = bpf_probe_read_kernel(packet->data + LENGTH_FIELD_SIZE, capture_size, data);
     if (ret < 0) {
         bpf_ringbuf_discard(packet, 0);
         return XDP_PASS;  // 读取失败就继续传递数据包
