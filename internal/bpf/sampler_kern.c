@@ -14,6 +14,9 @@
 #define LENGTH_FIELD_SIZE 2  // 帧长度占用的字节数
 #define MAX_FRAME_LENGTH 0xFFFF // 两个字节能表示的最大长度 (65535)
 
+// 采样率相关常量
+#define SAMPLING_RATE 10   // 采样比例1:10，即采样约10%的包
+
 // 定义数据结构
 struct packet_data {
     __u8 data[MAX_CAPTURE];
@@ -24,6 +27,30 @@ struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 1024 * 1024); // 1MB ring buffer
 } rb SEC(".maps");
+
+// 定义用于采样决策的MAP
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(key_size, sizeof(__u32));
+    __uint(value_size, sizeof(__u32));
+    __uint(max_entries, 1);
+} sampling_map SEC(".maps");
+
+static __always_inline __u32 hash_packet(void *data, __u32 length)
+{
+    // 简单的哈希函数，用于决定是否采样
+    __u32 hash = 0;
+    unsigned char *p = data;
+    __u32 bytes_to_hash = length > 20 ? 20 : length; // 最多使用前20字节计算哈希
+
+    for (int i = 0; i < bytes_to_hash; i++) {
+        if (p + i >= data + length)
+            break;
+        hash = hash * 31 + p[i];
+    }
+
+    return hash;
+}
 
 SEC("xdp")
 int sampler(struct xdp_md *ctx)
@@ -37,6 +64,13 @@ int sampler(struct xdp_md *ctx)
 
     // 计算以太网帧长度
     __u32 frame_length = data_end - data;
+
+    // 采样决策 - 根据数据包哈希值决定是否采样
+    __u32 hash_value = hash_packet(data, frame_length);
+    if (hash_value % SAMPLING_RATE != 0) {
+        // 不符合采样条件，直接通过数据包
+        return XDP_PASS;
+    }
 
     // 防止长度溢出两个字节的存储空间
     __u16 stored_length;
