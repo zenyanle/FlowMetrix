@@ -10,12 +10,12 @@
 #include <linux/ip.h>
 
 // 常量定义
-#define MAX_CAPTURE 66     // 最大捕获64字节
+#define MAX_CAPTURE 66       // 最大捕获64字节
 #define LENGTH_FIELD_SIZE 2  // 帧长度占用的字节数
 #define MAX_FRAME_LENGTH 0xFFFF // 两个字节能表示的最大长度 (65535)
 
 // 采样率相关常量
-#define SAMPLING_RATE 10   // 采样比例1:10，即采样约10%的包
+#define SAMPLING_RATE 10     // 采样比例1:10，即每10个包采样1个
 
 // 定义数据结构
 struct packet_data {
@@ -28,30 +28,13 @@ struct {
     __uint(max_entries, 1024 * 1024); // 1MB ring buffer
 } rb SEC(".maps");
 
-// 定义用于采样决策的MAP
+// 定义用于采样计数器的MAP
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(key_size, sizeof(__u32));
     __uint(value_size, sizeof(__u32));
     __uint(max_entries, 1);
-} sampling_map SEC(".maps");
-
-static __always_inline __u32 hash_packet(void *data, __u32 length)
-{
-    // 简单的哈希函数，用于决定是否采样
-    __u32 hash = 0;
-    unsigned char *p = (unsigned char *)data;
-    __u32 bytes_to_hash = length > 20 ? 20 : length; // 最多使用前20字节计算哈希
-
-    for (int i = 0; i < bytes_to_hash; i++) {
-        // 修正指针比较，避免不同类型指针比较
-        if (i >= length)
-            break;
-        hash = hash * 31 + p[i];
-    }
-
-    return hash;
-}
+} counter_map SEC(".maps");
 
 SEC("xdp")
 int sampler(struct xdp_md *ctx)
@@ -63,15 +46,36 @@ int sampler(struct xdp_md *ctx)
     if (data >= data_end)
         return XDP_PASS;
 
+    // 采样决策 - 使用计数器决定是否采样
+    __u32 key = 0;
+    __u32 *counter = bpf_map_lookup_elem(&counter_map, &key);
+
+    // 如果计数器不存在，则初始化
+    if (!counter) {
+        __u32 init_val = SAMPLING_RATE;
+        bpf_map_update_elem(&counter_map, &key, &init_val, BPF_ANY);
+        return XDP_PASS; // 第一次遇到时初始化并跳过
+    }
+
+    // 原子递减计数器
+    __u32 old_val = __sync_fetch_and_sub(counter, 1);
+
+    // 如果计数器到达0则重置并采样数据包
+    if (old_val <= 1) {
+        // 重置计数器
+        __u32 reset_val = SAMPLING_RATE;
+        bpf_map_update_elem(&counter_map, &key, &reset_val, BPF_ANY);
+
+        // 以下代码进行采样
+        goto sample_packet;
+    }
+
+    // 计数器未到0，直接通过数据包
+    return XDP_PASS;
+
+sample_packet:
     // 计算以太网帧长度
     __u32 frame_length = data_end - data;
-
-    // 采样决策 - 根据数据包哈希值决定是否采样
-    __u32 hash_value = hash_packet(data, frame_length);
-    if (hash_value % SAMPLING_RATE != 0) {
-        // 不符合采样条件，直接通过数据包
-        return XDP_PASS;
-    }
 
     // 防止长度溢出两个字节的存储空间
     __u16 stored_length;
