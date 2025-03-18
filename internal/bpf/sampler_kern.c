@@ -40,11 +40,12 @@ static __always_inline __u32 hash_packet(void *data, __u32 length)
 {
     // 简单的哈希函数，用于决定是否采样
     __u32 hash = 0;
-    unsigned char *p = data;
+    unsigned char *p = (unsigned char *)data;
     __u32 bytes_to_hash = length > 20 ? 20 : length; // 最多使用前20字节计算哈希
 
     for (int i = 0; i < bytes_to_hash; i++) {
-        if (p + i >= data + length)
+        // 修正指针比较，避免不同类型指针比较
+        if (i >= length)
             break;
         hash = hash * 31 + p[i];
     }
