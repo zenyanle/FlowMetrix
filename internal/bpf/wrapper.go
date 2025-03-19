@@ -18,12 +18,12 @@ func (s *SamplerKernObjectsWrapper) Close() {
 	}
 }
 
-func NewRingReader() (*ringbuf.Reader, link.Link, *SamplerKernObjectsWrapper) {
+func NewRingReader(interfaceName string) (*ringbuf.Reader, link.Link, *SamplerKernObjectsWrapper) {
 	objs := sampler_kernObjects{}
 	if err := loadSampler_kernObjects(&objs, nil); err != nil {
 		logger.Fatalf("Loading objects: %v", err)
 	}
-	interfaceName := "ens33"
+	// interfaceName := "ens33"
 	// interfaceName := config.Get("config.ifname").(string)
 
 	iface, err := net.InterfaceByName(interfaceName)

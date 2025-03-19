@@ -45,7 +45,7 @@ func main() {
 	// flag.BoolVar(&verbose, "v", false, "Verbose output")
 	flag.BoolVar(&debug, "d", false, "Enable debug output")
 	flag.IntVar(&vmwareOffset, "offset", VMwareOffset, "VMware header offset (default: 24)")
-	flag.BoolVar(&detectVMware, "auto-detect", true, "Auto-detect VMware header offset")
+	flag.BoolVar(&detectVMware, "auto-detect", false, "Auto-detect VMware header offset")
 	flag.BoolVar(&disableLog, "no-log", false, "Disable logrus output")
 	// flag.IntVar(&maxBytes, "max-bytes", 512, "Maximum bytes to process (default: 512)")
 	flag.Parse()
@@ -54,7 +54,7 @@ func main() {
 		logger.DisableLogOutput()
 	}
 
-	rd, xdplink, obj := bpf.NewRingReader()
+	rd, xdplink, obj := bpf.NewRingReader(interfaceName)
 
 	defer obj.Close()
 	defer xdplink.Close()
