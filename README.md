@@ -1,8 +1,5 @@
 # FlowMetrix：基于 eBPF 与 GreptimeDB 的高性能网络监控系统
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/YOUR_GITHUB_USERNAME/FlowMetrix)](https://golang.org)  
-[![License](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
-
 **FlowMetrix** 利用 Linux 内核中的 **eBPF（Extended Berkeley Packet Filter）** 技术，实现了高效、低开销的网络数据捕获，并将结构化数据写入 **GreptimeDB**，实现对网络流量的实时监控、分析与可观测性。
 
 ---
